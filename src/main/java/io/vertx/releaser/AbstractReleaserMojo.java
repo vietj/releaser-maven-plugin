@@ -1,6 +1,5 @@
 package io.vertx.releaser;
 
-import org.apache.maven.Maven;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Dependency;
 import org.apache.maven.model.Model;
