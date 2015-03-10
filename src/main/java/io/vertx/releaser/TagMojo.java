@@ -16,8 +16,8 @@ import java.util.Map;
 /**
  * @author <a href="mailto:julien@julienviet.com">Julien Viet</a>
  */
-@Mojo(name = "release", aggregator = true)
-public class ReleaseMojo extends AbstractReleaserMojo {
+@Mojo(name = "tag", aggregator = true)
+public class TagMojo extends AbstractReleaserMojo {
 
   @Override
   protected void execute(Map<MavenProject, String> projects) throws MojoExecutionException, MojoFailureException {
@@ -31,37 +31,26 @@ public class ReleaseMojo extends AbstractReleaserMojo {
         plugin.setVersion("1.9.2");
         PluginDescriptor pluginDesc = pluginManager.loadPlugin(plugin, pluginRepos, repoSession);
 
-        // Various conf
+        // Add modified pom.xml
+        MojoDescriptor tagDesc = pluginDesc.getMojo("tag");
+        Xpp3Dom tagConfDom = new Xpp3Dom("configuration");
         Xpp3Dom pushChangesDom = new Xpp3Dom("pushChanges");
         pushChangesDom.setValue("false");
         Xpp3Dom basedirDom = new Xpp3Dom("basedir");
         basedirDom.setValue(entry.getKey().getBasedir().getAbsolutePath());
-
-        // Add modified pom.xml
-        MojoDescriptor addDesc = pluginDesc.getMojo("add");
-        Xpp3Dom includesDom = new Xpp3Dom("includes");
-        includesDom.setValue("pom.xml");
-        Xpp3Dom addConfDom = new Xpp3Dom("configuration");
-        addConfDom.addChild(pushChangesDom);
-        addConfDom.addChild(basedirDom);
-        addConfDom.addChild(includesDom);
-        MojoExecution addExec = new MojoExecution(addDesc, Xpp3DomUtils.mergeXpp3Dom(addConfDom, toXpp3Dom(addDesc.getMojoConfiguration())));
-
-        // Commit
-        MojoDescriptor checkinDesc = pluginDesc.getMojo("checkin");
         Xpp3Dom messageDom = new Xpp3Dom("message");
-        messageDom.setValue("Releasing " + entry.getValue());
-        Xpp3Dom checkinConfDom = new Xpp3Dom("configuration");
-        checkinConfDom.addChild(pushChangesDom);
-        checkinConfDom.addChild(basedirDom);
-        checkinConfDom.addChild(messageDom);
-        MojoExecution checkinExec = new MojoExecution(checkinDesc, Xpp3DomUtils.mergeXpp3Dom(checkinConfDom, toXpp3Dom(checkinDesc.getMojoConfiguration())));
+        messageDom.setValue("Tagging " + entry.getValue());
+        Xpp3Dom tagDom = new Xpp3Dom("tag");
+        tagDom.setValue(entry.getValue());
+        tagConfDom.addChild(pushChangesDom);
+        tagConfDom.addChild(basedirDom);
+        tagConfDom.addChild(messageDom);
+        tagConfDom.addChild(tagDom);
+        MojoExecution tagExec = new MojoExecution(tagDesc, Xpp3DomUtils.mergeXpp3Dom(tagConfDom, toXpp3Dom(tagDesc.getMojoConfiguration())));
 
         // Execute mojos
         mavenSession.setCurrentProject(entry.getKey());
-        pluginManager.executeMojo(mavenSession, addExec);
-        pluginManager.executeMojo(mavenSession, checkinExec);
-
+        pluginManager.executeMojo(mavenSession, tagExec);
       } catch (Exception e) {
         e.printStackTrace();
       }
