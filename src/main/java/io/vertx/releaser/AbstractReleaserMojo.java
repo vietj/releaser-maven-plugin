@@ -1,22 +1,40 @@
 package io.vertx.releaser;
 
+import org.apache.maven.Maven;
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Dependency;
+import org.apache.maven.model.Model;
+import org.apache.maven.model.io.xpp3.MavenXpp3Reader;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.BuildPluginManager;
+import org.apache.maven.plugin.MojoExecutionException;
+import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Component;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
 import org.codehaus.plexus.configuration.PlexusConfiguration;
+import org.codehaus.plexus.interpolation.Interpolator;
+import org.codehaus.plexus.interpolation.PropertiesBasedValueSource;
+import org.codehaus.plexus.interpolation.StringSearchInterpolator;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.eclipse.aether.RepositorySystem;
 import org.eclipse.aether.RepositorySystemSession;
+import org.eclipse.aether.artifact.Artifact;
+import org.eclipse.aether.artifact.DefaultArtifact;
 import org.eclipse.aether.repository.RemoteRepository;
+import org.eclipse.aether.resolution.ArtifactRequest;
+import org.eclipse.aether.resolution.ArtifactResult;
 
 import javax.xml.stream.Location;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
+import java.io.File;
+import java.io.FileReader;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 
 // https://vzurczak.wordpress.com/2014/04/04/no-plugin-found-for-prefix/
 // mvn io.vertx:releaser-maven-plugin:sort
@@ -48,6 +66,58 @@ public abstract class AbstractReleaserMojo extends AbstractMojo {
 
   @Component()
   protected BuildPluginManager pluginManager;
+
+  @Override
+  public void execute() throws MojoExecutionException, MojoFailureException {
+    Map<String, String> versions = new HashMap<String, String>();
+    try {
+      Artifact artifact = new DefaultArtifact(dependencies.getGroupId(), dependencies.getArtifactId(), "pom", dependencies.getVersion());
+      ArtifactRequest request = new ArtifactRequest();
+      request.setArtifact(artifact);
+      request.setRepositories(Collections.<RemoteRepository>emptyList());
+      ArtifactResult result = repoSystem.resolveArtifact(repoSession, request);
+
+      File pomFile = result.getArtifact().getFile();
+
+      FileReader fileReader = new FileReader(pomFile);
+      MavenXpp3Reader pomReader = new MavenXpp3Reader();
+      Model model = pomReader.read(fileReader);
+      model.setPomFile(pomFile);
+      MavenProject project = new MavenProject(model);
+
+      Interpolator interpolator = new StringSearchInterpolator();
+      interpolator.addValueSource(new PropertiesBasedValueSource(project.getProperties()));
+
+      for (Dependency dm : project.getDependencyManagement().getDependencies()) {
+        String groupId = dm.getGroupId();
+        String artifactId = dm.getArtifactId();
+        String version = interpolator.interpolate(dm.getVersion());
+        versions.put(groupId + ":" + artifactId, version);
+      }
+
+    } catch (Exception e) {
+      MojoExecutionException ex = new MojoExecutionException("Cannot resolve dependencies");
+      ex.initCause(e);
+      throw ex;
+    }
+
+    // Determine the version for each module or fail
+    Map<MavenProject, String> projects = new IdentityHashMap<MavenProject, String>();
+    for (MavenProject project : mavenSession.getResult().getTopologicallySortedProjects()) {
+      if (project != mavenProject) {
+        String version = versions.get(project.getGroupId() + ":" + project.getArtifactId());
+        if (version != null) {
+          projects.put(project, version);
+        } else {
+          throw new MojoExecutionException("Missing version for project " + project.getGroupId() + ":" + project.getArtifact());
+        }
+      }
+    }
+
+    execute(projects);
+  }
+
+  protected abstract void execute(Map<MavenProject, String> projects) throws MojoExecutionException, MojoFailureException;
 
   /**
    * Converts PlexusConfiguration to a Xpp3Dom.

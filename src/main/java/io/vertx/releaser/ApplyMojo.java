@@ -12,16 +12,8 @@ import org.apache.maven.plugin.descriptor.PluginDescriptor;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.project.MavenProject;
 import org.apache.maven.shared.release.util.ReleaseUtil;
-import org.codehaus.plexus.interpolation.Interpolator;
-import org.codehaus.plexus.interpolation.PropertiesBasedValueSource;
-import org.codehaus.plexus.interpolation.StringSearchInterpolator;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.codehaus.plexus.util.xml.Xpp3DomUtils;
-import org.eclipse.aether.artifact.Artifact;
-import org.eclipse.aether.artifact.DefaultArtifact;
-import org.eclipse.aether.repository.RemoteRepository;
-import org.eclipse.aether.resolution.ArtifactRequest;
-import org.eclipse.aether.resolution.ArtifactResult;
 
 import javax.xml.stream.Location;
 import javax.xml.stream.XMLInputFactory;
@@ -29,12 +21,8 @@ import javax.xml.stream.XMLStreamReader;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
-import java.io.FileReader;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.IdentityHashMap;
 import java.util.Map;
 
 // https://vzurczak.wordpress.com/2014/04/04/no-plugin-found-for-prefix/
@@ -43,59 +31,10 @@ import java.util.Map;
 public class ApplyMojo extends AbstractReleaserMojo {
 
   @Override
-  public void execute() throws MojoExecutionException, MojoFailureException {
-
-    Map<String, String> versions = new HashMap<String, String>();
-    try {
-      Artifact artifact = new DefaultArtifact(dependencies.getGroupId(), dependencies.getArtifactId(), "pom", dependencies.getVersion());
-      ArtifactRequest request = new ArtifactRequest();
-      request.setArtifact(artifact);
-      request.setRepositories(Collections.<RemoteRepository>emptyList());
-      ArtifactResult result = repoSystem.resolveArtifact(repoSession, request);
-
-      File pomFile = result.getArtifact().getFile();
-
-      FileReader fileReader = new FileReader(pomFile);
-      MavenXpp3Reader pomReader = new MavenXpp3Reader();
-      Model model = pomReader.read(fileReader);
-      model.setPomFile(pomFile);
-      MavenProject project = new MavenProject(model);
-
-      Interpolator interpolator = new StringSearchInterpolator();
-      interpolator.addValueSource(new PropertiesBasedValueSource(project.getProperties()));
-
-      for (Dependency dm : project.getDependencyManagement().getDependencies()) {
-        String groupId = dm.getGroupId();
-        String artifactId = dm.getArtifactId();
-        String version = interpolator.interpolate(dm.getVersion());
-        versions.put(groupId + ":" + artifactId, version);
-      }
-
-    } catch (Exception e) {
-      MojoExecutionException ex = new MojoExecutionException("Cannot resolve dependencies");
-      ex.initCause(e);
-      throw ex;
-    }
-
-    // Determine the version for each module or fail
-    Map<MavenProject, String> projectVersions = new IdentityHashMap<MavenProject, String>();
-    for (MavenProject project : mavenSession.getResult().getTopologicallySortedProjects()) {
-      if (project != mavenProject) {
-        String version = versions.get(project.getGroupId() + ":" + project.getArtifactId());
-        if (version != null) {
-          projectVersions.put(project, version);
-        } else {
-          throw new MojoExecutionException("Missing version for project " + project.getGroupId() + ":" + project.getArtifact());
-        }
-      }
-    }
-
-    //
-
-
+  protected void execute(Map<MavenProject, String> projects) throws MojoExecutionException, MojoFailureException {
     // Now execute the versions set plugin on the projects
     try {
-      for (Map.Entry<MavenProject, String> entry : projectVersions.entrySet()) {
+      for (Map.Entry<MavenProject, String> entry : projects.entrySet()) {
         MavenProject project = entry.getKey();
         Plugin plugin = new Plugin();
         plugin.setGroupId("org.codehaus.mojo");
@@ -119,7 +58,7 @@ public class ApplyMojo extends AbstractReleaserMojo {
     mavenSession.setCurrentProject(mavenProject);
 
     // Rewrite each pom to have the new versions vertx dependencies set
-    for (MavenProject project : projectVersions.keySet()) {
+    for (MavenProject project : projects.keySet()) {
       System.out.println("Rewriting " + project.getGroupId() + ":" + project.getArtifactId());
       File pom = ReleaseUtil.getStandardPom(project);
       ByteArrayOutputStream buffer = new ByteArrayOutputStream();
