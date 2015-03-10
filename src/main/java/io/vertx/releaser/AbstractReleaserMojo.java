@@ -29,11 +29,14 @@ import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 import java.io.File;
 import java.io.FileReader;
+import java.net.URI;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 // https://vzurczak.wordpress.com/2014/04/04/no-plugin-found-for-prefix/
 // mvn io.vertx:releaser-maven-plugin:sort
@@ -100,17 +103,30 @@ public abstract class AbstractReleaserMojo extends AbstractMojo {
       throw ex;
     }
 
-    // Determine the version for each module or fail
+    // Determine the version for each module or fail (maybe there is a better way to link a project and its modules)
+    Set<File> modules = new HashSet<File>();
+    for (String module : mavenProject.getModules()) {
+      File moduleDir = new File(mavenProject.getFile().toURI().resolve(module));
+      File modulePom = new File(moduleDir, "pom.xml");
+      modules.add(modulePom);
+    }
+
     Map<MavenProject, String> projects = new IdentityHashMap<MavenProject, String>();
     for (MavenProject project : mavenSession.getResult().getTopologicallySortedProjects()) {
-      if (project != mavenProject) {
+      if (modules.contains(project.getFile())) {
         String version = versions.get(project.getGroupId() + ":" + project.getArtifactId());
         if (version != null) {
+          System.out.println(project.getGroupId() + ":" + project.getArtifactId() + " -> " + project.getParent());
           projects.put(project, version);
         } else {
           throw new MojoExecutionException("Missing version for project " + project.getGroupId() + ":" + project.getArtifact());
         }
       }
+    }
+
+    System.out.println("Determine projects version:");
+    for (Map.Entry<MavenProject, String> entry : projects.entrySet()) {
+      System.out.println(entry.getKey().getGroupId() + ":" + entry.getKey().getArtifactId() + "-> " + entry.getValue());
     }
 
     execute(projects);
