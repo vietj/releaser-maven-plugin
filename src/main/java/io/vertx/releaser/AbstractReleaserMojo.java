@@ -110,12 +110,15 @@ public abstract class AbstractReleaserMojo extends AbstractMojo {
     Map<MavenProject, String> projects = new IdentityHashMap<MavenProject, String>();
     for (MavenProject project : mavenSession.getResult().getTopologicallySortedProjects()) {
       if (modules.contains(project.getFile())) {
-        String version = versions.get(project.getGroupId() + ":" + project.getArtifactId());
+        String groupId = project.getGroupId();
+        String artifactId = project.getArtifactId();
+        String key = groupId + ":" + artifactId;
+        String version = versions.get(key);
         if (version != null) {
-          System.out.println(project.getGroupId() + ":" + project.getArtifactId() + " -> " + project.getParent());
+          System.out.println(groupId + ":" + artifactId + " -> " + project.getParent());
           projects.put(project, version);
         } else {
-          throw new MojoExecutionException("Missing version for project " + project.getGroupId() + ":" + project.getArtifact());
+          throw new MojoExecutionException("Missing version for project " + groupId + ":" + project.getArtifactId());
         }
       }
     }
