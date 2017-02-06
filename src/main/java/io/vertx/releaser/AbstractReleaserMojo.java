@@ -24,12 +24,8 @@ import org.eclipse.aether.repository.RemoteRepository;
 import org.eclipse.aether.resolution.ArtifactRequest;
 import org.eclipse.aether.resolution.ArtifactResult;
 
-import javax.xml.stream.Location;
-import javax.xml.stream.XMLStreamException;
-import javax.xml.stream.XMLStreamReader;
 import java.io.File;
 import java.io.FileReader;
-import java.net.URI;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -150,36 +146,5 @@ public abstract class AbstractReleaserMojo extends AbstractMojo {
       result.addChild(toXpp3Dom(child));
     }
     return result;
-  }
-
-  /**
-   * @return the range of the 'stack.version' property in the pom.xml file or null when not found
-   */
-  static Location[] findRange(XMLStreamReader xmlStream) throws XMLStreamException {
-    int status = 0;
-    Location from = null, to = null, location = null;
-    while (xmlStream.hasNext()) {
-      if (xmlStream.isStartElement()) {
-        String element = xmlStream.getLocalName();
-        if (status == 0 && element.equals("project")) {
-          status = 1;
-        } else if (status == 1 && element.equals("properties")) {
-          status = 2;
-        } else if (status == 2 && element.equals("stack.version")) {
-          status = 3;
-          from = xmlStream.getLocation();
-        }
-
-      } else if (xmlStream.isEndElement()) {
-        String element = xmlStream.getLocalName();
-        if (status == 3 && element.equals("stack.version")) {
-          to = location;
-          break;
-        }
-      }
-      location = xmlStream.getLocation();
-      xmlStream.next();
-    }
-    return from != null && to != null ? new Location[]{from, to} : null;
   }
 }
