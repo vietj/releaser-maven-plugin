@@ -10,7 +10,7 @@
     <version>7</version>
   </parent>
 
-  <groupId>io.vertx</groupId>
+  <groupId>com.julienviet</groupId>
   <artifactId>releaser-maven-plugin</artifactId>
   <version>1.0-SNAPSHOT</version>
   <packaging>maven-plugin</packaging>

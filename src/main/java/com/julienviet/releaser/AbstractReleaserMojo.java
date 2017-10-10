@@ -1,4 +1,4 @@
-package io.vertx.releaser;
+package com.julienviet.releaser;
 
 import org.apache.maven.execution.MavenSession;
 import org.apache.maven.model.Dependency;
