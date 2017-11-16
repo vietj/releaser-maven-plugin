@@ -37,6 +37,7 @@ public class ProxyMojo extends AbstractMojo {
   private Vertx vertx;
   private ConcurrentMap<String, Buffer> map = new ConcurrentHashMap<>();
   private Staging staging;
+  private String repositoryId;
 
   @Override
   public void execute() throws MojoExecutionException, MojoFailureException {
@@ -94,7 +95,7 @@ public class ProxyMojo extends AbstractMojo {
             long failed = staging.uploads.values().stream().mapToInt(upload -> upload.result.failed() ? 1 : 0).sum();
             long pending = staging.uploads.values().stream().mapToInt(upload -> upload.result.isComplete() ? 0 : 1).sum();
             JsonArray errors = new JsonArray(staging.uploads.values().stream().filter(upload -> upload.result.failed()).map(upload -> upload.result.cause().getMessage()).collect(Collectors.toList()));
-            result.put("repositoryId", staging.repositoryId);
+            result.put("repositoryId", repositoryId);
             result.put("staged", staged);
             result.put("failed", failed);
             result.put("pending", pending);
@@ -159,7 +160,6 @@ public class ProxyMojo extends AbstractMojo {
 
     private final HttpClient client;
     private final Map<String, Upload> uploads = new HashMap<>();
-    private String repositoryId;
 
     Staging(Map<String, Buffer> resources) {
       HttpClientOptions options = new HttpClientOptions();
@@ -226,20 +226,24 @@ public class ProxyMojo extends AbstractMojo {
     }
 
     void stage(Handler<AsyncResult<CompositeFuture>> handler) {
-      createStagingRepo(ar -> {
-        if (ar.succeeded()) {
-          repositoryId = ar.result();
-          List<Future> futures = new ArrayList<>();
-          for (Upload upload : uploads.values()) {
-            futures.add(upload.result);
-            upload.upload();
+      if (repositoryId == null) {
+        createStagingRepo(ar -> {
+          if (ar.succeeded()) {
+            repositoryId = ar.result();
+            stage(handler);
+          } else {
+            handler.handle(ar.mapEmpty());
           }
-          CompositeFuture fut = CompositeFuture.join(futures);
-          fut.setHandler(handler);
-        } else {
-          handler.handle(ar.mapEmpty());
+        });
+      } else {
+        List<Future> futures = new ArrayList<>();
+        for (Upload upload : uploads.values()) {
+          futures.add(upload.result);
+          upload.upload();
         }
-      });
+        CompositeFuture fut = CompositeFuture.join(futures);
+        fut.setHandler(handler);
+      }
     }
 
     void createStagingRepo(Handler<AsyncResult<String>> resultHandler) {
