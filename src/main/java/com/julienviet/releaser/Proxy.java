@@ -3,276 +3,252 @@ package com.julienviet.releaser;
 import io.vertx.core.*;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.*;
-import io.vertx.core.json.JsonArray;
-import io.vertx.core.json.JsonObject;
+import io.vertx.core.impl.NoStackTraceThrowable;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
+import java.util.concurrent.CompletableFuture;
 
 public class Proxy extends AbstractVerticle {
 
-  private HttpServer server;
+  public interface Listener {
+
+    Listener DEFAULT = new Listener() {};
+
+    default void onStagingCreate(String profileId) {}
+    default void onStagingSucceded(String profileId, String repoId) {}
+    default void onSuccessFailed(String profileId, Throwable cause) {}
+    default void onResourceCreate(String uri) {}
+    default void onResourceSucceeded(String uri) {}
+    default void onResourceFailed(String uri, Throwable cause) {}
+  }
+
+  private Listener listener;
+  private String stagingHost;
+  private int stagingPort;
+  private boolean stagingSsl;
+  private boolean stagingPipelining;
+  private boolean stagingKeepAlive;
+  private int stagingPipeliningLimit;
+  private int stagingMaxPoolSize;
   private String stagingProfileId;
   private String stagingUsername;
   private String stagingPassword;
   private int port;
-
-  private ConcurrentMap<String, Buffer> map = new ConcurrentHashMap<>();
-  private Staging staging;
   private String repositoryId;
 
-  public Proxy stagingProfileId(String stagingProfileId) {
-    this.stagingProfileId = stagingProfileId;
-    return this;
+  private HttpServer server;
+  private HttpClient client;
+
+  private CompletableFuture<Staging> staging;
+
+  public Proxy(ProxyOptions options) {
+    this(options, Listener.DEFAULT);
   }
 
-  public Proxy stagingUsername(String stagingUsername) {
-    this.stagingUsername = stagingUsername;
-    return this;
-  }
-
-  public Proxy stagingPassword(String stagingPassword) {
-    this.stagingPassword = stagingPassword;
-    return this;
-  }
-
-  public Proxy port(int port) {
-    this.port = port;
-    return this;
-  }
-
-  public Proxy repositoryId(String repositoryId) {
-    this.repositoryId = repositoryId;
-    return this;
+  public Proxy(ProxyOptions options, Listener listener) {
+    this.stagingHost = options.getStagingHost();
+    this.stagingPort = options.getStagingPort();
+    this.stagingSsl = options.isStagingSsl();
+    this.stagingPipelining = options.isStagingPipelining();
+    this.stagingKeepAlive = options.isStagingKeepAlive();
+    this.stagingPipeliningLimit = options.getStagingPipeliningLimit();
+    this.stagingMaxPoolSize = options.getStagingMaxPoolSize();
+    this.stagingProfileId = options.getStagingProfileId();
+    this.stagingUsername = options.getStagingUsername();
+    this.stagingPassword = options.getStagingPassword();
+    this.port = options.getPort();
+    this.repositoryId = options.getRepositoryId();
+    this.listener = listener;
   }
 
   @Override
   public void start(Future<Void> startFuture) throws Exception {
+    HttpClientOptions options = new HttpClientOptions();
+    options.setDefaultPort(stagingPort);
+    options.setDefaultHost(stagingHost);
+    options.setSsl(stagingSsl);
+    options.setPipelining(stagingPipelining);
+    options.setKeepAlive(stagingKeepAlive);
+    options.setPipeliningLimit(stagingPipeliningLimit);
+    options.setMaxPoolSize(stagingMaxPoolSize);
+    options.setTrustAll(true);
+    client = vertx.createHttpClient(options);
     server = vertx.createHttpServer()
         .requestHandler(this::handle)
         .listen(port, ar -> startFuture.handle(ar.mapEmpty()));
   }
 
   private void handle(HttpServerRequest req) {
-    HttpMethod method = req.method();
-    if (req.path().equals("/repo") && method == HttpMethod.GET) {
-      JsonObject result = new JsonObject();
-      map.forEach((path, body) -> {
-        result.put(path, body.length());
-      });
-      req.response().putHeader("Content-Type", "application/json").end(result.encode());
-      return;
-    } else if (req.path().startsWith("/repo/")) {
-      String path = req.path().substring("/repo".length());
-      if (method == HttpMethod.OPTIONS) {
-        req.response().putHeader("Allow", "OPTIONS, GET, PUT").end();
-        return;
-      } else if (method == HttpMethod.PUT) {
-        req.bodyHandler(body -> {
-          System.out.println("Stored " + path);
-          map.put(path, body);
-          req.response().end();
-        });
-        return;
-      } else if (method == HttpMethod.GET) {
-        Buffer buffer = map.get(path);
-        if (buffer == null) {
-          req.response().setStatusCode(404).end();
-        } else {
-          req.response().end(buffer);
-        }
-        return;
-      }
-    } else if (req.path().equals("/stage")) {
-      if (method == HttpMethod.GET) {
-        JsonObject result = new JsonObject();
-        if (staging != null) {
-          long staged = staging.uploads.values().stream().mapToInt(upload -> upload.result.succeeded() ? 1 : 0).sum();
-          long failed = staging.uploads.values().stream().mapToInt(upload -> upload.result.failed() ? 1 : 0).sum();
-          long pending = staging.uploads.values().stream().mapToInt(upload -> upload.result.isComplete() ? 0 : 1).sum();
-          JsonArray errors = new JsonArray(staging.uploads.values().stream().filter(upload -> upload.result.failed()).map(upload -> upload.result.cause().getMessage()).collect(Collectors.toList()));
-          result.put("repositoryId", repositoryId);
-          result.put("staged", staged);
-          result.put("failed", failed);
-          result.put("pending", pending);
-          result.put("errors", errors);
-          result.put("staging", true);
-        } else {
-          result.put("staging", false);
-        }
-        req.response().putHeader("Content-Type", "application/json").end(result.encode());
-        return;
-      } else if (method == HttpMethod.POST) {
-        if (staging != null) {
-          // Conflict
-          req.response().setStatusCode(409).end();
-        } else {
-          staging = new Staging(map);
-          long start = System.currentTimeMillis();
-          staging.stage(ar -> {
-            staging = null;
-            if (ar.succeeded()) {
-              long l = System.currentTimeMillis() - start;
-              final long hr = TimeUnit.MILLISECONDS.toHours(l);
-              final long min = TimeUnit.MILLISECONDS.toMinutes(l - TimeUnit.HOURS.toMillis(hr));
-              final long sec = TimeUnit.MILLISECONDS.toSeconds(l - TimeUnit.HOURS.toMillis(hr) - TimeUnit.MINUTES.toMillis(min));
-              final long ms = TimeUnit.MILLISECONDS.toMillis(l - TimeUnit.HOURS.toMillis(hr) - TimeUnit.MINUTES.toMillis(min) - TimeUnit.SECONDS.toMillis(sec));
-              String t =  String.format("%02d:%02d:%02d.%03d", hr, min, sec, ms);
-              System.out.println("Repository staged in " + t);
-            } else {
-              ar.cause().printStackTrace();
-            }
-          });
-          req.response().end();
-        }
-        return;
+    req.pause();
+    if (staging == null) {
+      staging = new CompletableFuture<>();
+      if (repositoryId != null) {
+        staging.complete(new Staging(repositoryId));
+      } else {
+        createStagingRepo(staging);
       }
     }
-    System.out.println("Unhandled " + req.path() + " " + method);
+    staging.whenComplete((staging, err) -> {
+      if (err == null) {
+        staging.handleRequest(req);
+      } else {
+        req.resume();
+        req.response().setStatusCode(500).end();
+      }
+    });
+  }
+
+  private HttpClientRequest createBaseRequest(HttpMethod method, String uri) {
+    HttpClientRequest request = client.request(method, uri);
+    request.putHeader("Authorization", "Basic " + Base64.getEncoder().encodeToString((stagingUsername + ":" + stagingPassword).getBytes()));
+    request.putHeader("Cache-control", "no-cache");
+    request.putHeader("Cache-store", "no-store");
+    request.putHeader("Pragma", "no-cache");
+    request.putHeader("Expires", "0");
+    request.putHeader("User-Agent", "Apache-Maven/3.5.0 (Java 1.8.0_112; Mac OS X 10.13)");
+    return request;
+  }
+
+  private String invalidResponse(HttpMethod method, String requestUri, int status, Buffer body) {
+    StringBuilder msg = new StringBuilder("InvalidResponse[" + method + ", " + requestUri + ", " + status);
+    if (body != null && body.length() > 0) {
+      msg.append(", ");
+      msg.append(body);
+    }
+    msg.append("]");
+    return msg.toString();
+  }
+
+  private void createStagingRepo(CompletableFuture<Staging> resultHandler) {
+    Future<String> fut = Future.future();
+    fut.setHandler(ar -> {
+      if (ar.succeeded()) {
+        listener.onStagingSucceded(stagingProfileId, ar.result());
+        resultHandler.complete(new Staging(ar.result()));
+      } else {
+        listener.onSuccessFailed(stagingProfileId, ar.cause());
+        resultHandler.completeExceptionally(fut.cause());
+      }
+    });
+    String requestUri = "/service/local/staging/profiles/" + stagingProfileId + "/start";
+    listener.onStagingCreate(stagingProfileId);
+    HttpClientRequest post = createBaseRequest(HttpMethod.POST, requestUri);
+    post.putHeader("Content-Type", "application/xml");
+    post.exceptionHandler(fut::tryFail);
+    post.handler(resp -> {
+      resp.bodyHandler(body -> {
+        if (resp.statusCode() == 201) {
+          String content = body.toString();
+          int from = content.indexOf("<stagedRepositoryId>");
+          int to = content.indexOf("</stagedRepositoryId>");
+          if (from != -1 && to != -1) {
+            String repoId = content.substring(from + "<stagedRepositoryId>".length(), to);
+            fut.tryComplete(repoId);
+            return;
+          }
+        }
+        fut.tryFail(invalidResponse(HttpMethod.POST, requestUri, resp.statusCode(), body));
+      });
+    });
+    post.end(Buffer.buffer("<promoteRequest>\n" +
+        "  <data>\n" +
+        "    <description>test description</description>\n" +
+        "  </data>\n" +
+        "</promoteRequest>\n"));
+
   }
 
   private class Staging {
 
-    private final HttpClient client;
-    private final Map<String, Upload> uploads = new HashMap<>();
+    private final String id;
+    private final Map<String, Resource> map = new HashMap<>();
 
-    Staging(Map<String, Buffer> resources) {
-      HttpClientOptions options = new HttpClientOptions();
-      options.setDefaultPort(443);
-      options.setDefaultHost("oss.sonatype.org");
-      options.setSsl(true);
-      options.setPipelining(true);
-      options.setKeepAlive(true);
-      options.setPipeliningLimit(10);
-      options.setMaxPoolSize(5);
-      options.setTrustAll(true);
-      client = vertx.createHttpClient(options);
-      for (Map.Entry<String, Buffer> resource : resources.entrySet()) {
-        String path = resource.getKey();
-        Buffer body = resource.getValue();
-        uploads.put(path, new Upload(path, body));
-      }
+    Staging(String id) {
+      this.id = id;
     }
 
-    class Upload {
-      final String path;
-      final Buffer body;
-      final Future<Void> result;
-      Throwable last;
-      Upload(String path, Buffer body) {
-        this.path = path;
-        this.body = body;
-        this.result = Future.future();
+    private class Resource {
+
+      private final String uri;
+      private Buffer content;
+      private boolean stale;
+      private Future<Void> upload;
+
+      private Resource(String uri) {
+        this.uri = uri;
       }
 
-      void upload() {
-        String requestUri = "/service/local/staging/deployByRepositoryId/" + repositoryId + path;
-        upload(requestUri, body, 0);
+      private void check() {
+        if (upload == null) {
+          stale = false;
+          upload = Future.future();
+          upload.setHandler(ar -> {
+            if (ar.failed()) {
+              stale = true;
+            }
+            check();
+          });
+          upload(upload);
+        } else if (upload.isComplete()) {
+          if (stale) {
+            upload = null;
+            check();
+          }
+        }
       }
 
-      private void upload(String requestUri, Buffer body, int retries) {
+      private void upload(Future<Void> result) {
+        Buffer requestBody = content;
+        String requestUri = "/service/local/staging/deployByRepositoryId/" + id + uri;
+        listener.onResourceCreate(requestUri);
         Future<Void> fut = Future.future();
         fut.setHandler(ar -> {
           if (ar.succeeded()) {
-            map.remove(path);
             result.tryComplete();
           } else {
-            if (retries < 8) {
-              upload(requestUri, body, retries + 1);
-            } else {
-              result.tryFail("Failed to upload " + requestUri + ": " + ar.cause().getMessage());
-            }
+            result.tryFail("Failed to upload " + requestUri + ": " + ar.cause().getMessage());
           }
         });
-        HttpClientRequest put = createRequest(HttpMethod.PUT, requestUri);
+        HttpClientRequest put = createBaseRequest(HttpMethod.PUT, requestUri);
         put.handler(resp -> {
           resp.bodyHandler(e -> {
             if (resp.statusCode() == 201) {
-              System.out.println("Uploaded " + requestUri);
+              listener.onResourceSucceeded(requestUri);
               fut.tryComplete();
             } else {
-              fut.tryFail(invalidResponse(HttpMethod.PUT, requestUri, resp.statusCode(), body));
+              String failure = invalidResponse(HttpMethod.PUT, requestUri, resp.statusCode(), requestBody);
+              listener.onResourceFailed(requestUri, new NoStackTraceThrowable(failure));
+              fut.tryFail(failure);
             }
           });
         });
         put.exceptionHandler(fut::tryFail);
-        put.end(body);
+        put.end(requestBody);
       }
     }
 
-    void stage(Handler<AsyncResult<CompositeFuture>> handler) {
-      if (repositoryId == null) {
-        createStagingRepo(ar -> {
-          if (ar.succeeded()) {
-            repositoryId = ar.result();
-            stage(handler);
-          } else {
-            handler.handle(ar.mapEmpty());
-          }
+    private void handleRequest(HttpServerRequest req) {
+      req.resume();
+      HttpMethod method = req.method();
+      String path = req.path();
+      if (method == HttpMethod.OPTIONS) {
+        req.response().putHeader("Allow", "OPTIONS, GET, PUT").end();
+      } else if (method == HttpMethod.PUT) {
+        req.bodyHandler(body -> {
+          Resource res = map.computeIfAbsent(path, Resource::new);
+          res.content = body;
+          res.stale = true;
+          req.response().setStatusCode(201).end();
+          res.check();
         });
-      } else {
-        List<Future> futures = new ArrayList<>();
-        for (Upload upload : uploads.values()) {
-          futures.add(upload.result);
-          upload.upload();
+      } else if (method == HttpMethod.GET) {
+        Resource resource = map.get(path);
+        if (resource == null) {
+          req.response().setStatusCode(404).end();
+        } else {
+          req.response().end(resource.content);
         }
-        CompositeFuture fut = CompositeFuture.join(futures);
-        fut.setHandler(handler);
       }
-    }
-
-    void createStagingRepo(Handler<AsyncResult<String>> resultHandler) {
-      Future<String> fut = Future.future();
-      fut.setHandler(resultHandler);
-      String requestUri = "/service/local/staging/profiles/" + stagingProfileId + "/start";
-      HttpClientRequest post = createRequest(HttpMethod.POST, requestUri);
-      post.putHeader("Content-Type", "application/xml");
-      post.exceptionHandler(fut::tryFail);
-      post.handler(resp -> {
-        resp.bodyHandler(body -> {
-          if (resp.statusCode() == 201) {
-            String content = body.toString();
-            int from = content.indexOf("<stagedRepositoryId>");
-            int to = content.indexOf("</stagedRepositoryId>");
-            if (from != -1 && to != -1) {
-              String repoId = content.substring(from + "<stagedRepositoryId>".length(), to);
-              fut.tryComplete(repoId);
-              return;
-            }
-          }
-          fut.tryFail(invalidResponse(HttpMethod.POST, requestUri, resp.statusCode(), body));
-        });
-      });
-      post.end(Buffer.buffer("<promoteRequest>\n" +
-          "  <data>\n" +
-          "    <description>test description</description>\n" +
-          "  </data>\n" +
-          "</promoteRequest>\n"));
-
-    }
-
-    private String invalidResponse(HttpMethod method, String requestUri, int status, Buffer body) {
-      StringBuilder msg = new StringBuilder("InvalidResponse[" + method + ", " + requestUri + ", " + status);
-      if (body != null && body.length() > 0) {
-        msg.append(", ");
-        msg.append(body);
-      }
-      msg.append("]");
-      return msg.toString();
-    }
-
-    HttpClientRequest createRequest(HttpMethod method, String uri) {
-      HttpClientRequest request = client.request(method, uri);
-      request.putHeader("Authorization", "Basic " + Base64.getEncoder().encodeToString((stagingUsername + ":" + stagingPassword).getBytes()));
-      request.putHeader("Cache-control", "no-cache");
-      request.putHeader("Cache-store", "no-store");
-      request.putHeader("Pragma", "no-cache");
-      request.putHeader("Expires", "0");
-      request.putHeader("User-Agent", "Apache-Maven/3.5.0 (Java 1.8.0_112; Mac OS X 10.13)");
-      return request;
     }
   }
 }

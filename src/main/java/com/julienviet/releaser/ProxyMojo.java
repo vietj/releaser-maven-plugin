@@ -1,20 +1,13 @@
 package com.julienviet.releaser;
 
 import io.vertx.core.*;
-import io.vertx.core.Future;
-import io.vertx.core.buffer.Buffer;
-import io.vertx.core.http.*;
-import io.vertx.core.json.JsonArray;
-import io.vertx.core.json.JsonObject;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
 import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 
-import java.util.*;
 import java.util.concurrent.*;
-import java.util.stream.Collectors;
 
 /**
  * @author <a href="mailto:julien@julienviet.com">Julien Viet</a>
@@ -49,11 +42,45 @@ public class ProxyMojo extends AbstractMojo {
 
     Vertx vertx = Vertx.vertx();
 
-    Proxy proxy = new Proxy()
-        .port(proxyPort)
-        .stagingProfileId(stagingProfileId)
-        .stagingUsername(stagingUsername)
-        .stagingPassword(stagingPassword);
+    Proxy proxy = new Proxy(new ProxyOptions()
+        .setPort(proxyPort)
+        .setStagingProfileId(stagingProfileId)
+        .setStagingUsername(stagingUsername)
+        .setStagingPassword(stagingPassword), new Proxy.Listener() {
+      @Override
+      public void onStagingCreate(String profileId) {
+        System.out.println("Creating staging repo for " + profileId);
+      }
+      @Override
+      public void onStagingSucceded(String profileId, String repoId) {
+        System.out.println("Created staging repo " + repoId + " for " + profileId);
+      }
+      @Override
+      public void onSuccessFailed(String profileId, Throwable cause) {
+        System.out.println("Could not create staging repo");
+        cause.printStackTrace();
+      }
+      int inflight;
+      @Override
+      public void onResourceCreate(String uri) {
+        inflight++;
+        report();
+      }
+      @Override
+      public void onResourceSucceeded(String uri) {
+        inflight--;
+        report();
+      }
+      @Override
+      public void onResourceFailed(String uri, Throwable cause) {
+        inflight--;
+        cause.printStackTrace();
+        report();
+      }
+      void report() {
+        System.out.println("Current status: " + inflight);
+      }
+    });
 
     CompletableFuture<Void> sync = new CompletableFuture<>();
     vertx.deployVerticle(proxy, ar -> {
@@ -66,8 +93,7 @@ public class ProxyMojo extends AbstractMojo {
 
     try {
       sync.get();
-      System.out.println("Proxy started, you can deploy to http://localhost:" + proxyPort +
-              "/repo and use http://localhost/stage");
+      System.out.println("Proxy started, you can deploy to http://localhost:" + proxyPort + "");
       CountDownLatch latch = new CountDownLatch(1);
       latch.await();
     } catch (Exception ignore) {
