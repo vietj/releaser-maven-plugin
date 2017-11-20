@@ -17,7 +17,7 @@ import java.util.concurrent.*;
 /**
  * @author <a href="mailto:julien@julienviet.com">Julien Viet</a>
  */
-@Mojo(name = "proxy", aggregator = true)
+@Mojo(name = "proxy", requiresProject = false)
 public class ProxyMojo extends AbstractMojo {
 
   @Parameter(property = "stagingProfileId")
@@ -118,7 +118,7 @@ public class ProxyMojo extends AbstractMojo {
         report();
       }
       private void report() {
-        System.out.println("Current status: " + inflight.size());
+        System.out.println("In progress " + inflight.size());
       }
     }
 
