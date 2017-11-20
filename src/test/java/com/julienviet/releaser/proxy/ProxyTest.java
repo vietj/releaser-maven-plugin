@@ -129,7 +129,7 @@ public class ProxyTest {
             .setPort(8080), new Proxy.Listener() {
           public void onStagingCreate(String profileId) {  listener.onStagingCreate(profileId); }
           public void onStagingSucceded(String profileId, String repoId) { listener.onStagingSucceded(profileId, repoId); }
-          public void onSuccessFailed(String profileId, Throwable cause) { listener.onSuccessFailed(profileId, cause); }
+          public void onStagingFailed(String profileId, Throwable cause) { listener.onStagingFailed(profileId, cause); }
           public void onResourceCreate(String uri) { listener.onResourceCreate(uri); }
           public void onResourceSucceeded(String uri) { listener.onResourceSucceeded(uri); }
           public void onResourceFailed(String uri, Throwable cause) { listener.onResourceFailed(uri, cause); }

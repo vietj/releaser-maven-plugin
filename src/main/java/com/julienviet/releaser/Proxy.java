@@ -16,7 +16,7 @@ public class Proxy extends AbstractVerticle {
 
     default void onStagingCreate(String profileId) {}
     default void onStagingSucceded(String profileId, String repoId) {}
-    default void onSuccessFailed(String profileId, Throwable cause) {}
+    default void onStagingFailed(String profileId, Throwable cause) {}
     default void onResourceCreate(String uri) {}
     default void onResourceSucceeded(String uri) {}
     default void onResourceFailed(String uri, Throwable cause) {}
@@ -126,7 +126,7 @@ public class Proxy extends AbstractVerticle {
         listener.onStagingSucceded(stagingProfileId, ar.result());
         resultHandler.complete(new Staging(ar.result()));
       } else {
-        listener.onSuccessFailed(stagingProfileId, ar.cause());
+        listener.onStagingFailed(stagingProfileId, ar.cause());
         resultHandler.completeExceptionally(fut.cause());
       }
     });
