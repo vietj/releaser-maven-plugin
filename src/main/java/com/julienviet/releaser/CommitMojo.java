@@ -7,6 +7,7 @@ import org.apache.maven.plugin.MojoFailureException;
 import org.apache.maven.plugin.descriptor.MojoDescriptor;
 import org.apache.maven.plugin.descriptor.PluginDescriptor;
 import org.apache.maven.plugins.annotations.Mojo;
+import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.codehaus.plexus.util.xml.Xpp3DomUtils;
@@ -16,8 +17,11 @@ import java.util.Map;
 /**
  * @author <a href="mailto:julien@julienviet.com">Julien Viet</a>
  */
-@Mojo(name = "release", aggregator = true)
-public class ReleaseMojo extends AbstractReleaserMojo {
+@Mojo(name = "commit", aggregator = true)
+public class CommitMojo extends AbstractReleaserMojo {
+
+  @Parameter(property = "commitMessage")
+  private String commitMessage = "";
 
   @Override
   protected void execute(Map<MavenProject, String> projects) throws MojoExecutionException, MojoFailureException {
@@ -50,7 +54,13 @@ public class ReleaseMojo extends AbstractReleaserMojo {
         // Commit
         MojoDescriptor checkinDesc = pluginDesc.getMojo("checkin");
         Xpp3Dom messageDom = new Xpp3Dom("message");
-        messageDom.setValue("Releasing " + entry.getValue());
+        String msg;
+        if (commitMessage == null || commitMessage.length() == 0) {
+          msg = "Releasing " + entry.getValue();
+        } else {
+          msg = commitMessage;
+        }
+        messageDom.setValue(msg);
         Xpp3Dom checkinConfDom = new Xpp3Dom("configuration");
         checkinConfDom.addChild(pushChangesDom);
         checkinConfDom.addChild(basedirDom);

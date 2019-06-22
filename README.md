@@ -42,9 +42,9 @@ Mass version change
 
 Not documented (yet)
 
-### Release mojo
+### Commit mojo
 
-Mass releasing
+Mass commit
 
 Not documented (yet)
 
