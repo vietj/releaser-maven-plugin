@@ -170,14 +170,12 @@ public class Proxy extends AbstractVerticle {
     private class Resource {
 
       private final String uri;
-      private final String requestUri;
       private Buffer content;
       private boolean stale;
       private Future<Void> upload;
 
       private Resource(String uri) {
         this.uri = uri;
-        this.requestUri = "/service/local/staging/deployByRepositoryId/" + id + uri;
       }
 
       private void check() {
@@ -186,24 +184,11 @@ public class Proxy extends AbstractVerticle {
           upload = Future.future();
           upload.setHandler(ar -> {
             if (ar.failed()) {
+              stale = true;
             }
             check();
           });
-          upload(Future.future(ar -> {
-            if (ar.succeeded()) {
-              Response resp = ar.result();
-              if (resp.status == 201) {
-                listener.onResourceSucceeded(requestUri);
-                upload.tryComplete();
-              } else {
-                String failure = invalidResponse(HttpMethod.PUT, requestUri, resp.status, resp.body);
-                listener.onResourceFailed(requestUri, new NoStackTraceThrowable(failure));
-              }
-            } else {
-              stale = true;
-              upload.tryFail(ar.cause());
-            }
-          }));
+          upload(upload);
         } else if (upload.isComplete()) {
           if (stale) {
             upload = null;
@@ -212,10 +197,11 @@ public class Proxy extends AbstractVerticle {
         }
       }
 
-      private void upload(Future<Response> result) {
+      private void upload(Future<Void> result) {
         Buffer requestBody = content;
+        String requestUri = "/service/local/staging/deployByRepositoryId/" + id + uri;
         listener.onResourceCreate(requestUri);
-        Future<Response> fut = Future.future();
+        Future<Void> fut = Future.future();
         fut.setHandler(ar -> {
           if (ar.succeeded()) {
             result.tryComplete();
@@ -226,22 +212,19 @@ public class Proxy extends AbstractVerticle {
         HttpClientRequest put = createBaseRequest(HttpMethod.PUT, requestUri);
         put.handler(resp -> {
           resp.bodyHandler(e -> {
-            fut.tryComplete(new Response(resp.statusCode(), e));
+            if (resp.statusCode() == 201) {
+              listener.onResourceSucceeded(requestUri);
+              fut.tryComplete();
+            } else {
+              String failure = invalidResponse(HttpMethod.PUT, requestUri, resp.statusCode(), requestBody);
+              listener.onResourceFailed(requestUri, new NoStackTraceThrowable(failure));
+              fut.tryFail(failure);
+            }
           });
         });
         put.exceptionHandler(fut::tryFail);
         put.end(requestBody);
       }
-
-      private class Response {
-        final int status;
-        final Buffer body;
-        Response(int status, Buffer body) {
-          this.status = status;
-          this.body = body;
-        }
-      }
-
     }
 
     private void handleRequest(HttpServerRequest req) {
