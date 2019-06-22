@@ -59,8 +59,11 @@ public class ApplyMojo extends AbstractReleaserMojo {
         Xpp3Dom defaultConfDom = toXpp3Dom(mojoDesc.getMojoConfiguration());
         Xpp3Dom newVersionDom = new Xpp3Dom("newVersion");
         newVersionDom.setValue(entry.getValue());
+        Xpp3Dom generateBackupPomsDom = new Xpp3Dom("generateBackupPoms");
+        generateBackupPomsDom.setValue("false");
         Xpp3Dom confDom = new Xpp3Dom("configuration");
         confDom.addChild(newVersionDom);
+        confDom.addChild(generateBackupPomsDom);
         confDom = Xpp3DomUtils.mergeXpp3Dom(confDom, defaultConfDom);
         MojoExecution mojoExec = new MojoExecution(mojoDesc, confDom);
         mavenSession.setCurrentProject(project);
