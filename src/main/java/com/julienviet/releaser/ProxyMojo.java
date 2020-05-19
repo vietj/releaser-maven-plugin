@@ -98,7 +98,8 @@ public class ProxyMojo extends AbstractMojo {
       }
       @Override
       public void onStagingFailed(String profileId, Throwable cause) {
-        System.out.println("Could not create staging repo");
+        System.out.println("Could not create staging repo " + cause.getMessage());
+        cause.printStackTrace();
       }
       @Override
       public void onResourceCreate(String uri) {
