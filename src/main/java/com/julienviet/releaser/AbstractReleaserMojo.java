@@ -100,7 +100,7 @@ public abstract class AbstractReleaserMojo extends AbstractMojo {
     }
 
     // Determine the version for each module or fail (maybe there is a better way to link a project and its modules)
-    Set<File> modules = new HashSet<File>();
+    Set<File> modules = new HashSet<>();
     for (String module : mavenProject.getModules()) {
       File moduleDir = new File(mavenProject.getFile().toURI().resolve(module));
       File modulePom = new File(moduleDir, "pom.xml");

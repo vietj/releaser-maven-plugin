@@ -38,8 +38,7 @@ public class Proxy extends AbstractVerticle {
 
   private HttpServer server;
   private HttpClient client;
-
-  private CompletableFuture<Staging> staging;
+  private Staging staging;
 
   public Proxy(ProxyOptions options) {
     this(options, Listener.DEFAULT);
@@ -73,27 +72,14 @@ public class Proxy extends AbstractVerticle {
     options.setMaxPoolSize(stagingMaxPoolSize);
     options.setTrustAll(true);
     client = vertx.createHttpClient(options);
-    server = vertx.createHttpServer()
-        .requestHandler(this::handle)
-        .listen(port, ar -> startFuture.handle(ar.mapEmpty()));
-  }
-
-  private void handle(HttpServerRequest req) {
-    req.pause();
-    if (staging == null) {
-      staging = new CompletableFuture<>();
-      if (repositoryId != null) {
-        staging.complete(new Staging(repositoryId));
+    createStagingRepo(ar1 -> {
+      if (ar1.succeeded()) {
+        staging = ar1.result();
+        server = vertx.createHttpServer(new HttpServerOptions().setHandle100ContinueAutomatically(true))
+            .requestHandler(staging::handleRequest)
+            .listen(port, ar2 -> startFuture.handle(ar1.mapEmpty()));
       } else {
-        createStagingRepo(staging);
-      }
-    }
-    staging.whenComplete((staging, err) -> {
-      if (err == null) {
-        staging.handleRequest(req);
-      } else {
-        req.resume();
-        req.response().setStatusCode(500).end();
+        startFuture.fail(ar1.cause());
       }
     });
   }
@@ -119,15 +105,15 @@ public class Proxy extends AbstractVerticle {
     return msg.toString();
   }
 
-  private void createStagingRepo(CompletableFuture<Staging> resultHandler) {
+  private void createStagingRepo(Handler<AsyncResult<Staging>> resultHandler) {
     Future<String> fut = Future.future();
     fut.setHandler(ar -> {
       if (ar.succeeded()) {
         listener.onStagingSucceded(stagingProfileId, ar.result());
-        resultHandler.complete(new Staging(ar.result()));
+        resultHandler.handle(Future.succeededFuture(new Staging(ar.result())));
       } else {
         listener.onStagingFailed(stagingProfileId, ar.cause());
-        resultHandler.completeExceptionally(fut.cause());
+        resultHandler.handle(Future.failedFuture(fut.cause()));
       }
     });
     String requestUri = "/service/local/staging/profiles/" + stagingProfileId + "/start";
@@ -228,7 +214,6 @@ public class Proxy extends AbstractVerticle {
     }
 
     private void handleRequest(HttpServerRequest req) {
-      req.resume();
       HttpMethod method = req.method();
       String path = req.path();
       if (method == HttpMethod.OPTIONS) {

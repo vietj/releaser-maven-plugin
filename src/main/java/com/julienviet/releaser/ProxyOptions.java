@@ -2,7 +2,7 @@ package com.julienviet.releaser;
 
 public class ProxyOptions {
 
-  private String stagingHost = "oss.sonatype.org";
+  private String stagingHost = "s01.oss.sonatype.org";
   private int stagingPort = 443;
   private boolean stagingSsl = true;
   private boolean stagingPipelining = true;
