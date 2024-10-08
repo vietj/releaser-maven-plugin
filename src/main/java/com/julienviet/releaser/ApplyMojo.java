@@ -117,7 +117,7 @@ public class ApplyMojo extends AbstractReleaserMojo {
     doc.setXmlStandalone(true);
     TransformerFactory transformerFactory = TransformerFactory.newInstance();
     Transformer transformer = transformerFactory.newTransformer();
-    transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+    transformer.setOutputProperty(OutputKeys.INDENT, "no");
     transformer.setOutputProperty(OutputKeys.ENCODING, "UTF-8");
     transformer.setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "yes");
     DOMSource source = new DOMSource(doc);
