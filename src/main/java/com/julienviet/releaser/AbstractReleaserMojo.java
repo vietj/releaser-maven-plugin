@@ -67,7 +67,7 @@ public abstract class AbstractReleaserMojo extends AbstractMojo {
 
   @Override
   public void execute() throws MojoExecutionException, MojoFailureException {
-    Map<String, String> versions = new HashMap<String, String>();
+    Map<String, String> versions = new HashMap<>();
     try {
       Artifact artifact = new DefaultArtifact(dependencies.getGroupId(), dependencies.getArtifactId(), "pom", dependencies.getVersion());
       ArtifactRequest request = new ArtifactRequest();
@@ -86,6 +86,7 @@ public abstract class AbstractReleaserMojo extends AbstractMojo {
       Interpolator interpolator = new StringSearchInterpolator();
       interpolator.addValueSource(new PropertiesBasedValueSource(project.getProperties()));
 
+      versions.put(dependencies.getGroupId() + ":"+ dependencies.getArtifactId(), dependencies.getVersion());
       for (Dependency dm : project.getDependencyManagement().getDependencies()) {
         String groupId = dm.getGroupId();
         String artifactId = dm.getArtifactId();
@@ -94,9 +95,7 @@ public abstract class AbstractReleaserMojo extends AbstractMojo {
       }
 
     } catch (Exception e) {
-      MojoExecutionException ex = new MojoExecutionException("Cannot resolve dependencies");
-      ex.initCause(e);
-      throw ex;
+      throw new MojoExecutionException("Cannot resolve dependencies", e);
     }
 
     // Determine the version for each module or fail (maybe there is a better way to link a project and its modules)
@@ -115,7 +114,7 @@ public abstract class AbstractReleaserMojo extends AbstractMojo {
         String key = groupId + ":" + artifactId;
         String version = versions.get(key);
         if (version != null) {
-          System.out.println(groupId + ":" + artifactId + " -> " + project.getParent());
+          System.out.println(groupId + ":" + artifactId + " -> " + project.getParent() + " / " + version);
           projects.put(project, version);
         } else {
           throw new MojoExecutionException("Missing version for project " + groupId + ":" + project.getArtifactId());
