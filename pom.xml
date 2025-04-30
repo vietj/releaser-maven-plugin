@@ -15,11 +15,20 @@
   <version>1.1-SNAPSHOT</version>
   <packaging>maven-plugin</packaging>
 
+  <distributionManagement>
+    <snapshotRepository>
+      <id>vertx-snapshots-repository</id>
+      <name>Vert.x Snapshots Repository</name>
+      <url>${vertx.snapshotRepository}</url>
+    </snapshotRepository>
+  </distributionManagement>
+
   <properties>
     <maven.version>3.2.5</maven.version>
     <mavenPluginPluginVersion>3.4</mavenPluginPluginVersion>
     <maven.compiler.source>1.8</maven.compiler.source>
     <maven.compiler.target>1.8</maven.compiler.target>
+    <vertx.snapshotRepository>https://central.sonatype.com/repository/maven-snapshots/</vertx.snapshotRepository>
   </properties>
 
   <dependencies>
