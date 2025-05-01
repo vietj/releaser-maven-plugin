@@ -26,13 +26,7 @@ import org.eclipse.aether.resolution.ArtifactResult;
 
 import java.io.File;
 import java.io.FileReader;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.IdentityHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 // https://vzurczak.wordpress.com/2014/04/04/no-plugin-found-for-prefix/
 // mvn io.vertx:releaser-maven-plugin:sort
@@ -84,7 +78,9 @@ public abstract class AbstractReleaserMojo extends AbstractMojo {
       MavenProject project = new MavenProject(model);
 
       Interpolator interpolator = new StringSearchInterpolator();
-      interpolator.addValueSource(new PropertiesBasedValueSource(project.getProperties()));
+      Properties interpolatedProperties = new Properties(project.getProperties());
+      interpolatedProperties.put("project.version", dependencies.getVersion());
+      interpolator.addValueSource(new PropertiesBasedValueSource(interpolatedProperties));
 
       versions.put(dependencies.getGroupId() + ":"+ dependencies.getArtifactId(), dependencies.getVersion());
       for (Dependency dm : project.getDependencyManagement().getDependencies()) {
