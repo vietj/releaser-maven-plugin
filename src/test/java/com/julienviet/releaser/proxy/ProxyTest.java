@@ -39,22 +39,35 @@ public class ProxyTest {
   Pattern profileURLMatcher = Pattern.compile("/service/local/staging/profiles/([^/]+)/start");
   Pattern resourceURLMatcher = Pattern.compile("/service/local/staging/deployByRepositoryId/([^/]+)/(.*)");
 
-  BiFunction<String, String, Repo> repoFactory = Repo::new;
-  Proxy.Listener listener = Proxy.Listener.DEFAULT;
+  Proxy.Listener proxyListener = Proxy.Listener.DEFAULT;
+  Repo.Listener repoListener = Repo.Listener.DEFAULT;
 
   static class Repo extends ConcurrentHashMap<String, Resource> {
 
+    final ProxyTest proxyTest;
     final String profileId;
     final String id;
 
-    public Repo(String profileId, String id) {
+    public Repo(ProxyTest proxyTest, String profileId, String id) {
+      this.proxyTest = proxyTest;
       this.profileId = profileId;
       this.id = id;
     }
 
     boolean handlePut(String uri, Buffer content) {
-      computeIfAbsent(uri, p -> new Resource()).versions.add(content);
-      return true;
+      if (proxyTest.repoListener.handlePut(uri, content)) {
+        computeIfAbsent(uri, p -> new Resource()).versions.add(content);
+        return true;
+      } else {
+        return false;
+      }
+    }
+
+    interface Listener {
+      Listener DEFAULT = new Listener() {};
+      default boolean handlePut(String uri, Buffer content) {
+        return true;
+      }
     }
   }
 
@@ -103,7 +116,7 @@ public class ProxyTest {
               if (matcher.matches()) {
                 String profile = matcher.group(1);
                 String repoId = "test-" + repoSeq++;
-                Repo value = repoFactory.apply(profile, repoId);
+                Repo value = new Repo(ProxyTest.this, profile, repoId);
                 if (repoMap.putIfAbsent(repoId, value) == null) {
                   req.response().setStatusCode(201).end(
                       "<promoteResponse>" +
@@ -127,12 +140,12 @@ public class ProxyTest {
             .setStagingPipelining(true)
             .setStagingMaxPoolSize(1)
             .setPort(8080), new Proxy.Listener() {
-          public void onStagingCreate(String profileId) {  listener.onStagingCreate(profileId); }
-          public void onStagingSucceded(String profileId, String repoId) { listener.onStagingSucceded(profileId, repoId); }
-          public void onStagingFailed(String profileId, Throwable cause) { listener.onStagingFailed(profileId, cause); }
-          public void onResourceCreate(String uri) { listener.onResourceCreate(uri); }
-          public void onResourceSucceeded(String uri) { listener.onResourceSucceeded(uri); }
-          public void onResourceFailed(String uri, Throwable cause) { listener.onResourceFailed(uri, cause); }
+          public void onStagingCreate(String profileId) {  proxyListener.onStagingCreate(profileId); }
+          public void onStagingSucceded(String profileId, String repoId) { proxyListener.onStagingSucceded(profileId, repoId); }
+          public void onStagingFailed(String profileId, Throwable cause) { proxyListener.onStagingFailed(profileId, cause); }
+          public void onResourceCreate(String uri) { proxyListener.onResourceCreate(uri); }
+          public void onResourceSucceeded(String uri) { proxyListener.onResourceSucceeded(uri); }
+          public void onResourceFailed(String uri, Throwable cause) { proxyListener.onResourceFailed(uri, cause); }
         })
         , ctx.asyncAssertSuccess());
     client = vertx.createHttpClient(new HttpClientOptions()
@@ -209,21 +222,21 @@ public class ProxyTest {
   @Test
   public void testUploadRetry(TestContext ctx) {
     int times = 30;
-    repoFactory = (profileId, id) -> new Repo(profileId, id) {
+    repoListener = new Repo.Listener() {
       int count = 0;
       @Override
-      boolean handlePut(String uri, Buffer content) {
+      public boolean handlePut(String uri, Buffer content) {
         if (++count < times) {
           return false;
         } else {
-          return super.handlePut(uri, content);
+          return true;
         }
       }
     };
     AtomicInteger createCount = new AtomicInteger();
     AtomicInteger failedCount = new AtomicInteger();
     AtomicInteger succeededCount = new AtomicInteger();
-    listener = new Proxy.Listener() {
+    proxyListener = new Proxy.Listener() {
       @Override
       public void onResourceCreate(String uri) {
         createCount.incrementAndGet();
