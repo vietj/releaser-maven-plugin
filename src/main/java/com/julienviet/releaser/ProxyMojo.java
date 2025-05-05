@@ -138,14 +138,10 @@ public class ProxyMojo extends AbstractMojo {
         .setStagingUsername(stagingUsername)
         .setStagingPassword(stagingPassword), monitor);
 
-    CompletableFuture<Void> sync = new CompletableFuture<>();
-    vertx.deployVerticle(proxy, ar -> {
-      if (ar.succeeded()) {
-        sync.complete(null);
-      } else {
-        sync.completeExceptionally(ar.cause());
-      }
-    });
+    CompletableFuture<String> sync = vertx
+            .deployVerticle(proxy)
+            .toCompletionStage()
+            .toCompletableFuture();
 
     try {
       sync.get();

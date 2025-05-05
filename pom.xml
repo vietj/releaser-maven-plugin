@@ -16,8 +16,8 @@
 
   <properties>
     <maven.version>3.2.5</maven.version>
-    <mavenPluginPluginVersion>3.4</mavenPluginPluginVersion>
-    <vertx.version>3.5.0.Beta1</vertx.version>
+    <mavenPluginPluginVersion>3.15.1</mavenPluginPluginVersion>
+    <vertx.version>4.5.14</vertx.version>
   </properties>
 
   <dependencies>
@@ -79,6 +79,30 @@
 
   <build>
     <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-enforcer-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>release-enforce</id>
+            <phase>validate</phase>
+            <goals>
+              <goal>enforce</goal>
+            </goals>
+            <configuration>
+              <rules>
+                <requireJavaVersion>
+                  <message>Must be released with Java 8!</message>
+                  <version>[1.8,9)</version>
+                </requireJavaVersion>
+                <requireReleaseDeps>
+                  <message>No Snapshots Allowed during a release!</message>
+                </requireReleaseDeps>
+              </rules>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-plugin-plugin</artifactId>

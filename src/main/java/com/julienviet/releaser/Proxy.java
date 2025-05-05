@@ -3,10 +3,8 @@ package com.julienviet.releaser;
 import io.vertx.core.*;
 import io.vertx.core.buffer.Buffer;
 import io.vertx.core.http.*;
-import io.vertx.core.impl.NoStackTraceThrowable;
 
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
 
 public class Proxy extends AbstractVerticle {
 
@@ -61,31 +59,33 @@ public class Proxy extends AbstractVerticle {
   }
 
   @Override
-  public void start(Future<Void> startFuture) throws Exception {
-    HttpClientOptions options = new HttpClientOptions();
-    options.setDefaultPort(stagingPort);
-    options.setDefaultHost(stagingHost);
-    options.setSsl(stagingSsl);
-    options.setPipelining(stagingPipelining);
-    options.setKeepAlive(stagingKeepAlive);
-    options.setPipeliningLimit(stagingPipeliningLimit);
-    options.setMaxPoolSize(stagingMaxPoolSize);
-    options.setTrustAll(true);
-    client = vertx.createHttpClient(options);
-    createStagingRepo(ar1 -> {
-      if (ar1.succeeded()) {
-        staging = ar1.result();
+  public void start(Promise<Void> startPromise) {
+    HttpClientOptions clientOptions = new HttpClientOptions();
+    clientOptions.setDefaultPort(stagingPort);
+    clientOptions.setDefaultHost(stagingHost);
+    clientOptions.setSsl(stagingSsl);
+    clientOptions.setPipelining(stagingPipelining);
+    clientOptions.setKeepAlive(stagingKeepAlive);
+    clientOptions.setPipeliningLimit(stagingPipeliningLimit);
+    clientOptions.setTrustAll(true);
+    PoolOptions poolOptions = new PoolOptions();
+    poolOptions.setHttp1MaxSize(1);
+    client = vertx.createHttpClient(clientOptions, poolOptions);
+    createStagingRepo()
+      .compose(result -> {
+        staging = result;
         server = vertx.createHttpServer(new HttpServerOptions().setHandle100ContinueAutomatically(true))
-            .requestHandler(staging::handleRequest)
-            .listen(port, ar2 -> startFuture.handle(ar1.mapEmpty()));
-      } else {
-        startFuture.fail(ar1.cause());
-      }
-    });
+          .requestHandler(staging::handleRequest);
+        return server.listen(port);
+      })
+      .<Void>mapEmpty()
+      .onComplete(startPromise);
   }
 
-  private HttpClientRequest createBaseRequest(HttpMethod method, String uri) {
-    HttpClientRequest request = client.request(method, uri);
+  private RequestOptions createBaseRequest(HttpMethod method, String uri) {
+    RequestOptions request = new RequestOptions();
+    request.setMethod(method);
+    request.setURI(uri);
     request.putHeader("Authorization", "Basic " + Base64.getEncoder().encodeToString((stagingUsername + ":" + stagingPassword).getBytes()));
     request.putHeader("Cache-control", "no-cache");
     request.putHeader("Cache-store", "no-store");
@@ -105,43 +105,31 @@ public class Proxy extends AbstractVerticle {
     return msg.toString();
   }
 
-  private void createStagingRepo(Handler<AsyncResult<Staging>> resultHandler) {
-    Future<String> fut = Future.future();
-    fut.setHandler(ar -> {
-      if (ar.succeeded()) {
-        listener.onStagingSucceded(stagingProfileId, ar.result());
-        resultHandler.handle(Future.succeededFuture(new Staging(ar.result())));
-      } else {
-        listener.onStagingFailed(stagingProfileId, ar.cause());
-        resultHandler.handle(Future.failedFuture(fut.cause()));
-      }
-    });
+  private Future<Staging> createStagingRepo() {
     String requestUri = "/service/local/staging/profiles/" + stagingProfileId + "/start";
     listener.onStagingCreate(stagingProfileId);
-    HttpClientRequest post = createBaseRequest(HttpMethod.POST, requestUri);
+    RequestOptions post = createBaseRequest(HttpMethod.POST, requestUri);
     post.putHeader("Content-Type", "application/xml");
-    post.exceptionHandler(fut::tryFail);
-    post.handler(resp -> {
-      resp.bodyHandler(body -> {
-        if (resp.statusCode() == 201) {
+    return client.request(post)
+      .compose(request -> request
+        .send(Buffer.buffer("<promoteRequest>\n" +
+          "  <data>\n" +
+          "    <description>test description</description>\n" +
+          "  </data>\n" +
+          "</promoteRequest>\n"))
+        .expecting(HttpResponseExpectation.SC_CREATED)
+        .compose(HttpClientResponse::body)
+        .map(body -> {
           String content = body.toString();
           int from = content.indexOf("<stagedRepositoryId>");
           int to = content.indexOf("</stagedRepositoryId>");
           if (from != -1 && to != -1) {
             String repoId = content.substring(from + "<stagedRepositoryId>".length(), to);
-            fut.tryComplete(repoId);
-            return;
+            return new Staging(repoId);
+          } else {
+            throw new VertxException(invalidResponse(HttpMethod.POST, requestUri, 201, body));
           }
-        }
-        fut.tryFail(invalidResponse(HttpMethod.POST, requestUri, resp.statusCode(), body));
-      });
-    });
-    post.end(Buffer.buffer("<promoteRequest>\n" +
-        "  <data>\n" +
-        "    <description>test description</description>\n" +
-        "  </data>\n" +
-        "</promoteRequest>\n"));
-
+        }));
   }
 
   private class Staging {
@@ -158,7 +146,7 @@ public class Proxy extends AbstractVerticle {
       private final String uri;
       private Buffer content;
       private boolean stale;
-      private Future<Void> upload;
+      private Future<?> upload;
 
       private Resource(String uri) {
         this.uri = uri;
@@ -167,14 +155,13 @@ public class Proxy extends AbstractVerticle {
       private void check() {
         if (upload == null) {
           stale = false;
-          upload = Future.future();
-          upload.setHandler(ar -> {
+          upload = upload();
+          upload.onComplete(ar -> {
             if (ar.failed()) {
               stale = true;
             }
             check();
           });
-          upload(upload);
         } else if (upload.isComplete()) {
           if (stale) {
             upload = null;
@@ -183,33 +170,23 @@ public class Proxy extends AbstractVerticle {
         }
       }
 
-      private void upload(Future<Void> result) {
+      private Future<?> upload() {
         Buffer requestBody = content;
         String requestUri = "/service/local/staging/deployByRepositoryId/" + id + uri;
         listener.onResourceCreate(requestUri);
-        Future<Void> fut = Future.future();
-        fut.setHandler(ar -> {
-          if (ar.succeeded()) {
-            result.tryComplete();
-          } else {
-            result.tryFail("Failed to upload " + requestUri + ": " + ar.cause().getMessage());
-          }
-        });
-        HttpClientRequest put = createBaseRequest(HttpMethod.PUT, requestUri);
-        put.handler(resp -> {
-          resp.bodyHandler(e -> {
-            if (resp.statusCode() == 201) {
-              listener.onResourceSucceeded(requestUri);
-              fut.tryComplete();
-            } else {
-              String failure = invalidResponse(HttpMethod.PUT, requestUri, resp.statusCode(), requestBody);
-              listener.onResourceFailed(requestUri, new NoStackTraceThrowable(failure));
-              fut.tryFail(failure);
-            }
-          });
-        });
-        put.exceptionHandler(fut::tryFail);
-        put.end(requestBody);
+        RequestOptions put = createBaseRequest(HttpMethod.PUT, requestUri);
+        return client.request(put)
+          .compose(request -> request
+            .send(requestBody)
+            .expecting(HttpResponseExpectation.SC_CREATED)
+            .andThen(ar -> {
+              if (ar.succeeded()) {
+                listener.onResourceSucceeded(requestUri);
+              } else {
+                String failure = invalidResponse(HttpMethod.PUT, requestUri, 201, requestBody);
+                listener.onResourceFailed(requestUri, new VertxException(failure));
+              }
+            }));
       }
     }
 
