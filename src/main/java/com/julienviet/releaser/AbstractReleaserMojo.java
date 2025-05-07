@@ -27,6 +27,7 @@ import org.eclipse.aether.resolution.ArtifactResult;
 import java.io.File;
 import java.io.FileReader;
 import java.util.*;
+import java.util.stream.Collectors;
 
 // https://vzurczak.wordpress.com/2014/04/04/no-plugin-found-for-prefix/
 // mvn io.vertx:releaser-maven-plugin:sort
@@ -37,9 +38,6 @@ public abstract class AbstractReleaserMojo extends AbstractMojo {
 
   @Parameter(required = true, defaultValue = "${session}", readonly = true)
   protected MavenSession mavenSession;
-
-  @Parameter(required = true)
-  protected Dependency dependencies;
 
   @Parameter(defaultValue = "${reactorProjects}", readonly = true, required = true )
   protected List<MavenProject> reactorProjects;
@@ -61,72 +59,33 @@ public abstract class AbstractReleaserMojo extends AbstractMojo {
 
   @Override
   public void execute() throws MojoExecutionException, MojoFailureException {
-    Map<String, String> versions = new HashMap<>();
-    try {
-      Artifact artifact = new DefaultArtifact(dependencies.getGroupId(), dependencies.getArtifactId(), "pom", dependencies.getVersion());
-      ArtifactRequest request = new ArtifactRequest();
-      request.setArtifact(artifact);
-      request.setRepositories(Collections.<RemoteRepository>emptyList());
-      ArtifactResult result = repoSystem.resolveArtifact(repoSession, request);
+    List<MavenProject> projects = new ArrayList<>(mavenSession.getResult().getTopologicallySortedProjects());
 
-      File pomFile = result.getArtifact().getFile();
+    mavenSession.getProjectMap();
 
-      FileReader fileReader = new FileReader(pomFile);
-      MavenXpp3Reader pomReader = new MavenXpp3Reader();
-      Model model = pomReader.read(fileReader);
-      model.setPomFile(pomFile);
-      MavenProject project = new MavenProject(model);
+    //
+    Set<File> module = mavenSession
+      .getCurrentProject()
+      .getModules()
+      .stream()
+      .map(decl -> new File(mavenSession.getCurrentProject().getBasedir(), decl))
+      .collect(Collectors.toSet());
 
-      Interpolator interpolator = new StringSearchInterpolator();
-      Properties interpolatedProperties = new Properties(project.getProperties());
-      interpolatedProperties.put("project.version", dependencies.getVersion());
-      interpolator.addValueSource(new PropertiesBasedValueSource(interpolatedProperties));
-
-      versions.put(dependencies.getGroupId() + ":"+ dependencies.getArtifactId(), dependencies.getVersion());
-      for (Dependency dm : project.getDependencyManagement().getDependencies()) {
-        String groupId = dm.getGroupId();
-        String artifactId = dm.getArtifactId();
-        String version = interpolator.interpolate(dm.getVersion());
-        versions.put(groupId + ":" + artifactId, version);
-      }
-
-    } catch (Exception e) {
-      throw new MojoExecutionException("Cannot resolve dependencies", e);
-    }
-
-    // Determine the version for each module or fail (maybe there is a better way to link a project and its modules)
-    Set<File> modules = new HashSet<>();
-    for (String module : mavenProject.getModules()) {
-      File moduleDir = new File(mavenProject.getFile().toURI().resolve(module));
-      File modulePom = new File(moduleDir, "pom.xml");
-      modules.add(modulePom);
-    }
-
-    Map<MavenProject, String> projects = new IdentityHashMap<MavenProject, String>();
-    for (MavenProject project : mavenSession.getResult().getTopologicallySortedProjects()) {
-      if (modules.contains(project.getFile())) {
-        String groupId = project.getGroupId();
-        String artifactId = project.getArtifactId();
-        String key = groupId + ":" + artifactId;
-        String version = versions.get(key);
-        if (version != null) {
-          System.out.println(groupId + ":" + artifactId + " -> " + project.getParent() + " / " + version);
-          projects.put(project, version);
-        } else {
-          throw new MojoExecutionException("Missing version for project " + groupId + ":" + project.getArtifactId());
-        }
+    // Filter top level
+    Iterator<MavenProject> it = projects.iterator();
+    while (it.hasNext()) {
+      MavenProject project = it.next();
+      if (!module.contains(project.getBasedir())) {
+        it.remove();
+      } else {
+        System.out.println("Adding " + project);
       }
     }
 
-    System.out.println("Determine projects version:");
-    for (Map.Entry<MavenProject, String> entry : projects.entrySet()) {
-      System.out.println(entry.getKey().getGroupId() + ":" + entry.getKey().getArtifactId() + "-> " + entry.getValue());
-    }
-
-    execute(projects);
+    execute(new ArrayList<>(projects));
   }
 
-  protected abstract void execute(Map<MavenProject, String> projects) throws MojoExecutionException, MojoFailureException;
+  protected abstract void execute(List<MavenProject> projects) throws MojoExecutionException, MojoFailureException;
 
   /**
    * Converts PlexusConfiguration to a Xpp3Dom.

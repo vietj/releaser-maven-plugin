@@ -12,6 +12,7 @@ import org.apache.maven.project.MavenProject;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.codehaus.plexus.util.xml.Xpp3DomUtils;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -24,8 +25,8 @@ public class CommitMojo extends AbstractReleaserMojo {
   private String commitMessage = "";
 
   @Override
-  protected void execute(Map<MavenProject, String> projects) throws MojoExecutionException, MojoFailureException {
-    for (Map.Entry<MavenProject, String> entry : projects.entrySet()) {
+  protected void execute(List<MavenProject> projects) throws MojoExecutionException, MojoFailureException {
+    for (MavenProject project : projects) {
 
       try {
 
@@ -39,7 +40,7 @@ public class CommitMojo extends AbstractReleaserMojo {
         Xpp3Dom pushChangesDom = new Xpp3Dom("pushChanges");
         pushChangesDom.setValue("false");
         Xpp3Dom basedirDom = new Xpp3Dom("basedir");
-        basedirDom.setValue(entry.getKey().getBasedir().getAbsolutePath());
+        basedirDom.setValue(project.getBasedir().getAbsolutePath());
 
         // Add modified pom.xml
         MojoDescriptor addDesc = pluginDesc.getMojo("add");
@@ -55,8 +56,9 @@ public class CommitMojo extends AbstractReleaserMojo {
         MojoDescriptor checkinDesc = pluginDesc.getMojo("checkin");
         Xpp3Dom messageDom = new Xpp3Dom("message");
         String msg;
-        if (commitMessage == null || commitMessage.length() == 0) {
-          msg = "Releasing " + entry.getValue();
+        if (commitMessage == null || commitMessage.isEmpty()) {
+          String version = project.getArtifact().getVersion();
+          msg = "Releasing " + version;
         } else {
           msg = commitMessage;
         }
@@ -68,7 +70,7 @@ public class CommitMojo extends AbstractReleaserMojo {
         MojoExecution checkinExec = new MojoExecution(checkinDesc, Xpp3DomUtils.mergeXpp3Dom(checkinConfDom, toXpp3Dom(checkinDesc.getMojoConfiguration())));
 
         // Execute mojos
-        mavenSession.setCurrentProject(entry.getKey());
+        mavenSession.setCurrentProject(project);
         pluginManager.executeMojo(mavenSession, addExec);
         pluginManager.executeMojo(mavenSession, checkinExec);
 

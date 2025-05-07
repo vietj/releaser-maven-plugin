@@ -11,6 +11,7 @@ import org.apache.maven.project.MavenProject;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.codehaus.plexus.util.xml.Xpp3DomUtils;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -20,8 +21,8 @@ import java.util.Map;
 public class TagMojo extends AbstractReleaserMojo {
 
   @Override
-  protected void execute(Map<MavenProject, String> projects) throws MojoExecutionException, MojoFailureException {
-    for (Map.Entry<MavenProject, String> entry : projects.entrySet()) {
+  protected void execute(List<MavenProject> projects) throws MojoExecutionException, MojoFailureException {
+    for (MavenProject project : projects) {
 
       try {
 
@@ -31,17 +32,20 @@ public class TagMojo extends AbstractReleaserMojo {
         plugin.setVersion("1.9.2");
         PluginDescriptor pluginDesc = pluginManager.loadPlugin(plugin, pluginRepos, repoSession);
 
+        // Get version
+        String version = project.getArtifact().getVersion();
+
         // Add modified pom.xml
         MojoDescriptor tagDesc = pluginDesc.getMojo("tag");
         Xpp3Dom tagConfDom = new Xpp3Dom("configuration");
         Xpp3Dom pushChangesDom = new Xpp3Dom("pushChanges");
         pushChangesDom.setValue("false");
         Xpp3Dom basedirDom = new Xpp3Dom("basedir");
-        basedirDom.setValue(entry.getKey().getBasedir().getAbsolutePath());
+        basedirDom.setValue(project.getBasedir().getAbsolutePath());
         Xpp3Dom messageDom = new Xpp3Dom("message");
-        messageDom.setValue("Tagging " + entry.getValue());
+        messageDom.setValue("Tagging " + version);
         Xpp3Dom tagDom = new Xpp3Dom("tag");
-        tagDom.setValue(entry.getValue());
+        tagDom.setValue(version);
         tagConfDom.addChild(pushChangesDom);
         tagConfDom.addChild(basedirDom);
         tagConfDom.addChild(messageDom);
@@ -49,7 +53,7 @@ public class TagMojo extends AbstractReleaserMojo {
         MojoExecution tagExec = new MojoExecution(tagDesc, Xpp3DomUtils.mergeXpp3Dom(tagConfDom, toXpp3Dom(tagDesc.getMojoConfiguration())));
 
         // Execute mojos
-        mavenSession.setCurrentProject(entry.getKey());
+        mavenSession.setCurrentProject(project);
         pluginManager.executeMojo(mavenSession, tagExec);
       } catch (Exception e) {
         e.printStackTrace();
